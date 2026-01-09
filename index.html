@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>幸運號碼抽籤 (1-25)</title>
+
+    <!-- React & DOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .perspective-1000 {
+                perspective: 1000px;
+            }
+        }
+        body {
+            background-color: #f1f5f9; /* slate-100 */
+            color: #0f172a; /* slate-900 */
+            font-family: system-ui, -apple-system, sans-serif;
+            overflow: hidden;
+        }
+        .lottery-btn {
+            @apply px-6 py-3 rounded-xl font-bold text-xl transition-all shadow-lg active:scale-95;
+        }
+        .lottery-btn-primary {
+            @apply bg-amber-500 hover:bg-amber-400 text-white shadow-amber-500/30;
+        }
+        .lottery-btn-secondary {
+            @apply bg-slate-700 hover:bg-slate-600 text-slate-200 shadow-slate-900/50 border border-slate-600;
+        }
+        /* Custom scrollbar for webkit */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1e293b;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+        // ==========================================
+        // HOOK: useLotterySounds
+        // ==========================================
+
+        // AudioContext Singleton
+        let audioContextInstance = null;
+        function getAudioContext() {
+            if (!audioContextInstance) {
+                const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+                if (AudioContextConstructor) {
+                    audioContextInstance = new AudioContextConstructor();
+                }
+            }
+            return audioContextInstance;
+        }
+
+        function playTone(ctx, frequency, duration, type = 'sine', volume = 0.3) {
+            const oscillator = ctx.createOscillator();
+            const gainNode = ctx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(ctx.destination);
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(frequency, ctx.currentTime);
+            gainNode.gain.setValueAtTime(0, ctx.currentTime);
+            gainNode.gain.linearRampToValueAtTime(volume, ctx.currentTime + 0.01);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
+            oscillator.start(ctx.currentTime);
+            oscillator.stop(ctx.currentTime + duration);
+        }
+
+        function playNoise(ctx, duration, volume = 0.2) {
+            const bufferSize = ctx.sampleRate * duration;
+            const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * 0.5;
+            const source = ctx.createBufferSource();
+            const gainNode = ctx.createGain();
+            const filter = ctx.createBiquadFilter();
+            source.buffer = buffer;
+            filter.type = 'bandpass';
+            filter.frequency.setValueAtTime(2000, ctx.currentTime);
+            filter.Q.setValueAtTime(1, ctx.currentTime);
+            source.connect(filter);
+            filter.connect(gainNode);
+            gainNode.connect(ctx.destination);
+            gainNode.gain.setValueAtTime(volume, ctx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
+            source.start(ctx.currentTime);
+            source.stop(ctx.currentTime + duration);
+        }
+
+        function playWoodNoise(ctx, duration, volume = 0.1) {
+            const bufferSize = Math.floor(ctx.sampleRate * duration);
+            const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * 0.3;
+            const source = ctx.createBufferSource();
+            const gainNode = ctx.createGain();
+            const filter = ctx.createBiquadFilter();
+            source.buffer = buffer;
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(800, ctx.currentTime);
+            filter.Q.setValueAtTime(2, ctx.currentTime);
+            source.connect(filter);
+            filter.connect(gainNode);
+            gainNode.connect(ctx.destination);
+            gainNode.gain.setValueAtTime(volume, ctx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
+            source.start(ctx.currentTime);
+            source.stop(ctx.currentTime + duration);
+        }
+
+        function useLotterySounds() {
+            const contextRef = useRef(null);
+            const wheelIntervalRef = useRef(null);
+
+            const initContext = useCallback(() => {
+                if (!contextRef.current) {
+                    try {
+                        contextRef.current = getAudioContext();
+                        if (contextRef.current?.state === 'suspended') {
+                            contextRef.current.resume();
+                        }
+                    } catch (e) {
+                        console.warn('AudioContext error', e);
+                    }
+                }
+                return contextRef.current;
+            }, []);
+
+            const play = useCallback((soundType) => {
+                const ctx = initContext();
+                if (!ctx) return;
+
+                // Sound logic mapped from original file
+                switch (soundType) {
+                    case 'gacha-rolling':
+                        for (let i = 0; i < 8; i++) {
+                            setTimeout(() => {
+                                playTone(ctx, 200 + Math.random() * 300, 0.05, 'triangle', 0.15);
+                                playNoise(ctx, 0.03, 0.1);
+                            }, i * 80 + Math.random() * 40);
+                        }
+                        break;
+                    case 'gacha-result':
+                        playTone(ctx, 523, 0.15, 'sine', 0.3);
+                        setTimeout(() => playTone(ctx, 659, 0.15, 'sine', 0.3), 100);
+                        setTimeout(() => playTone(ctx, 784, 0.25, 'sine', 0.35), 200);
+                        break;
+                    case 'fortune-shake':
+                        for (let i = 0; i < 15; i++) {
+                            setTimeout(() => {
+                                playTone(ctx, 150 + Math.random() * 200, 0.03, 'triangle', 0.08);
+                                playTone(ctx, 400 + Math.random() * 300, 0.015, 'sine', 0.05);
+                                playWoodNoise(ctx, 0.02, 0.06);
+                            }, i * 60 + Math.random() * 40);
+                        }
+                        break;
+                    case 'fortune-drop':
+                        for (let i = 0; i < 5; i++) {
+                            setTimeout(() => playTone(ctx, 300 - i * 30, 0.04, 'triangle', 0.1), i * 30);
+                        }
+                        setTimeout(() => {
+                            playTone(ctx, 200, 0.05, 'triangle', 0.15);
+                            playTone(ctx, 150, 0.08, 'sine', 0.1);
+                        }, 180);
+                        break;
+                    case 'wheel-tick':
+                        playTone(ctx, 1000, 0.02, 'square', 0.1);
+                        break;
+                    case 'wheel-result':
+                        playTone(ctx, 392, 0.1, 'sawtooth', 0.2);
+                        setTimeout(() => playTone(ctx, 523, 0.1, 'sawtooth', 0.25), 100);
+                        setTimeout(() => playTone(ctx, 659, 0.15, 'sawtooth', 0.3), 200);
+                        setTimeout(() => playTone(ctx, 784, 0.3, 'sawtooth', 0.35), 300);
+                        break;
+                }
+            }, [initContext]);
+
+            return { play };
+        }
+
+        // ==========================================
+        // COMPONENT: FortuneSticks
+        // ==========================================
+        function FortuneSticks({ items, onResult, onDrawStart, width, height, disabled }) {
+            const [drawing, setDrawing] = useState(false);
+            const [shakeY, setShakeY] = useState(0);
+            const [sticksY, setSticksY] = useState([]);
+            const [floatingStick, setFloatingStick] = useState(null);
+            const animationRef = useRef();
+            const { play: playSound } = useLotterySounds();
+
+            useEffect(() => {
+                if (items.length === 0) { setSticksY([]); return; }
+                setSticksY(Array(20).fill(0).map(() => Math.random() * 20));
+            }, [items.length]);
+
+            const selectItem = useCallback(() => {
+                const index = Math.floor(Math.random() * items.length);
+                return items[index];
+            }, [items]);
+
+            const draw = useCallback(() => {
+                if (drawing || items.length === 0 || disabled) return;
+                onDrawStart?.();
+                setDrawing(true);
+                setFloatingStick(null);
+
+                const winner = selectItem();
+                const startTime = Date.now();
+                const shakeDuration = 1500;
+                playSound('fortune-shake');
+
+                const shake = () => {
+                    const elapsed = Date.now() - startTime;
+                    if (elapsed < shakeDuration) {
+                        const intensity = 1 - (elapsed / shakeDuration);
+                        setShakeY(Math.sin(elapsed * 0.1) * 10 * intensity);
+                        setSticksY(prev => prev.map(() => Math.random() * 20 * intensity));
+                        animationRef.current = requestAnimationFrame(shake);
+                    } else {
+                        setShakeY(0);
+                        setSticksY(Array(20).fill(0).map(() => Math.random() * 5));
+
+                        let floatY = height * 0.9 - 150;
+                        const floatRotation = (Math.random() - 0.5) * 5;
+                        setFloatingStick({ item: winner, y: floatY, rotation: floatRotation });
+
+                        const floatAnim = () => {
+                            floatY -= 5; // Faster rise
+                            if (floatY > height * 0.9 - 350) { // Rise higher due to big scale
+                                setFloatingStick(prev => prev ? { ...prev, y: floatY } : null);
+                                animationRef.current = requestAnimationFrame(floatAnim);
+                            } else {
+                                playSound('fortune-drop');
+                                setTimeout(() => {
+                                    setDrawing(false);
+                                    onResult?.(winner);
+                                }, 500);
+                            }
+                        };
+                        animationRef.current = requestAnimationFrame(floatAnim);
+                    }
+                };
+                animationRef.current = requestAnimationFrame(shake);
+            }, [drawing, items, disabled, onDrawStart, selectItem, onResult, height, playSound]);
+
+            useEffect(() => () => cancelAnimationFrame(animationRef.current), []);
+
+            return (
+                <div onClick={draw} className="relative select-none flex justify-center items-end cursor-pointer" style={{ width, height, overflow: 'hidden' }}>
+                    <svg width={width} height={height} className="absolute inset-0" viewBox={`0 0 ${width} ${height}`}>
+                        <defs>
+                            <linearGradient id="woodGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                <stop offset="0%" stopColor="#8d6e63" /> <stop offset="50%" stopColor="#8d6e63" /> <stop offset="100%" stopColor="#5d4037" />
+                            </linearGradient>
+                            <linearGradient id="stickGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                <stop offset="0%" stopColor="#ffe082" /> <stop offset="100%" stopColor="#ffe082" />
+                            </linearGradient>
+                            <filter id="shadow"><feDropShadow dx="2" dy="2" stdDeviation="3" floodOpacity="0.3" /></filter>
+                        </defs>
+                        <g transform={`translate(${width / 2}, ${height * 0.9}) translate(0, ${shakeY}) scale(${width / 300})`}>
+                            {sticksY.map((y, i) => (
+                                <rect key={i} x={-40 + (i % 5) * 16} y={-260 - y} height={200} width={10} fill="url(#stickGradient)" stroke="#bf360c" strokeWidth="0.5" transform={`rotate(${(i % 2 ? 1 : -1) * Math.random() * 3})`} />
+                            ))}
+                            <path d="M -50 -180 L -50 0 L 50 0 L 50 -180 Z" fill="#3e2723" />
+                        </g>
+                        {floatingStick && (
+                            <g transform={`translate(${width / 2}, ${floatingStick.y}) rotate(${floatingStick.rotation}) scale(${width / 300})`}>
+                                <rect x="-10" y="-100" width="20" height="200" rx="2" fill="url(#stickGradient)" stroke="#bf360c" strokeWidth="2" filter="url(#shadow)" />
+                                <text x="0" y="-50" textAnchor="middle" fill="#bf360c" fontSize="24" fontWeight="bold" style={{ writingMode: 'vertical-rl', textOrientation: 'upright', letterSpacing: '4px' }}>
+                                    {floatingStick.item.label}
+                                </text>
+                            </g>
+                        )}
+                        <g transform={`translate(${width / 2}, ${height * 0.9}) translate(0, ${shakeY}) scale(${width / 300})`}>
+                            <path d="M -50 0 L -50 -180 L -25 -190 L -25 -10 Z" fill="#5d4037" stroke="#3e2723" />
+                            <rect x="-25" y="-190" width="50" height="190" fill="url(#woodGradient)" stroke="#3e2723" />
+                            <path d="M 25 -190 L 50 -180 L 50 0 L 25 -10 Z" fill="#6d4c41" stroke="#3e2723" />
+                            <path d="M -55 -175 L -55 -185 L -25 -195 L 25 -195 L 55 -185 L 55 -175 L 25 -185 L -25 -185 Z" fill="#4e342e" stroke="#3e2723" />
+                        </g>
+                    </svg>
+                </div>
+            );
+        }
+
+        // ==========================================
+        // COMPONENT: GachaMachine
+        // ==========================================
+        function GachaMachine({ items, onResult, onDrawStart, width, height, disabled }) {
+            const [balls, setBalls] = useState([]);
+            const [dialRotation, setDialRotation] = useState(0);
+            const [outputBall, setOutputBall] = useState(null);
+            const [drawing, setDrawing] = useState(false);
+            const animationRef = useRef();
+            const ballAnimRef = useRef();
+            const ballsRef = useRef([]);
+            const { play: playSound } = useLotterySounds();
+
+            const domeRadius = width * 0.38;
+            const domeCenterX = width / 2;
+            const domeCenterY = height * 0.32;
+            const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFE66D', '#F7DC6F'];
+
+            useEffect(() => {
+                if (items.length === 0) return;
+                const newBalls = [];
+                for (let i = 0; i < 30; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const r = Math.random() * domeRadius * 0.6;
+                    newBalls.push({
+                        x: domeCenterX + Math.cos(angle) * r,
+                        y: domeCenterY + domeRadius * 0.5 + Math.sin(angle) * r * 0.3,
+                        vx: (Math.random() - 0.5) * 2,
+                        vy: Math.random() * 0.5,
+                        color: colors[i % colors.length],
+                        radius: (width / 320) * (18 + Math.random() * 8) // Scale ball size
+                    });
+                }
+                ballsRef.current = newBalls;
+                setBalls(newBalls);
+            }, [items, width, height]);
+
+            useEffect(() => {
+                const animate = () => {
+                    const gravity = 0.15;
+                    const friction = 0.98;
+                    const bounce = 0.7;
+
+                    ballsRef.current.forEach(ball => {
+                        ball.vy += gravity;
+                        ball.vx *= friction;
+                        ball.x += ball.vx;
+                        ball.y += ball.vy;
+
+                        const dx = ball.x - domeCenterX;
+                        const dy = ball.y - domeCenterY;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        const maxDist = domeRadius - ball.radius - 5;
+
+                        if (dist > maxDist) {
+                            const angle = Math.atan2(dy, dx);
+                            ball.x = domeCenterX + Math.cos(angle) * maxDist;
+                            ball.y = domeCenterY + Math.sin(angle) * maxDist;
+                            const normalX = dx / dist;
+                            const normalY = dy / dist;
+                            const dot = ball.vx * normalX + ball.vy * normalY;
+                            ball.vx = (ball.vx - 2 * dot * normalX) * bounce;
+                            ball.vy = (ball.vy - 2 * dot * normalY) * bounce;
+                        }
+
+                        const bottomY = domeCenterY + domeRadius * 0.7;
+                        if (ball.y + ball.radius > bottomY) {
+                            ball.y = bottomY - ball.radius;
+                            ball.vy = -ball.vy * bounce;
+                            ball.vx += (Math.random() - 0.5) * 0.2;
+                        }
+                    });
+
+                    setBalls([...ballsRef.current]); // Force update for smoother anim
+                    ballAnimRef.current = requestAnimationFrame(animate);
+                };
+                ballAnimRef.current = requestAnimationFrame(animate);
+                return () => cancelAnimationFrame(ballAnimRef.current);
+            }, [domeCenterX, domeCenterY, domeRadius]);
+
+            const draw = useCallback(() => {
+                if (drawing || items.length === 0 || disabled) return;
+                onDrawStart?.();
+                setDrawing(true);
+                setOutputBall(null);
+                playSound('gacha-rolling');
+
+                const winner = items[Math.floor(Math.random() * items.length)];
+
+                // Jiggle balls
+                ballsRef.current.forEach(b => {
+                    b.vx += (Math.random() - 0.5) * 10;
+                    b.vy -= Math.random() * 10;
+                });
+
+                let startTime = Date.now();
+                const rotateAnim = () => {
+                    const elapsed = Date.now() - startTime;
+                    const progress = Math.min(elapsed / 2000, 1);
+                    const easeOut = 1 - Math.pow(1 - progress, 3);
+                    setDialRotation(easeOut * 720);
+
+                    if (progress < 1) {
+                        animationRef.current = requestAnimationFrame(rotateAnim);
+                    } else {
+                        const winBallColor = colors[Math.floor(Math.random() * colors.length)];
+                        setOutputBall({ color: winBallColor, label: winner.label });
+                        setTimeout(() => {
+                            setDrawing(false);
+                            playSound('gacha-result');
+                            onResult?.(winner);
+                        }, 500);
+                    }
+                };
+                animationRef.current = requestAnimationFrame(rotateAnim);
+
+            }, [drawing, items, disabled, onDrawStart, playSound, colors]);
+
+            useEffect(() => () => cancelAnimationFrame(animationRef.current), []);
+
+            return (
+                <div onClick={draw} className="relative select-none cursor-pointer" style={{ width, height }}>
+                    <svg width={width} height={height} className="absolute inset-0">
+                        <defs>
+                            <radialGradient id="domeGradient" cx="30%" cy="30%">
+                                <stop offset="0%" stopColor="rgba(255,255,255,0.2)" />
+                                <stop offset="100%" stopColor="rgba(15, 23, 42, 0.4)" />
+                            </radialGradient>
+                            <linearGradient id="bodyGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stopColor="#e74c3c" /> <stop offset="100%" stopColor="#922b21" />
+                            </linearGradient>
+                        </defs>
+                        <circle cx={domeCenterX} cy={domeCenterY} r={domeRadius} fill="url(#domeGradient)" stroke="rgba(255,255,255,0.5)" strokeWidth="4" />
+
+                        {balls.map((b, i) => (
+                            <circle key={i} cx={b.x} cy={b.y} r={b.radius} fill={b.color} stroke="rgba(255,255,255,0.4)" strokeWidth="2" />
+                        ))}
+
+                        <path d={`M ${width * 0.15} ${domeCenterY + domeRadius * 0.6} Q ${width * 0.1} ${height * 0.55} ${width * 0.12} ${height * 0.75} L ${width * 0.12} ${height * 0.88} Q ${width * 0.12} ${height * 0.95} ${width * 0.25} ${height * 0.95} L ${width * 0.75} ${height * 0.95} Q ${width * 0.88} ${height * 0.95} ${width * 0.88} ${height * 0.88} L ${width * 0.88} ${height * 0.75} Q ${width * 0.9} ${height * 0.55} ${width * 0.85} ${domeCenterY + domeRadius * 0.6} Z`} fill="url(#bodyGradient)" stroke="#7d231d" strokeWidth="3" />
+
+                        <g transform={`rotate(${dialRotation} ${width / 2} ${height * 0.68})`}>
+                            <circle cx={width / 2} cy={height * 0.68} r={width * 0.1} fill="#f1c40f" stroke="#b8860b" strokeWidth="3" />
+                            <rect x={width / 2 - width * 0.02} y={height * 0.68 - width * 0.06} width={width * 0.04} height={width * 0.12} fill="#d4a90a" rx="4" />
+                        </g>
+
+                        <rect x={width * 0.35} y={height * 0.87} width={width * 0.3} height={height * 0.06} rx="4" fill="#1a1a1a" />
+                        {outputBall && (
+                            <circle cx={width / 2} cy={height * 0.88} r={width * 0.07} fill={outputBall.color} stroke="#fff" strokeWidth="3" />
+                        )}
+                        <text x={width / 2} y={height * 0.8} textAnchor="middle" fill="white" fontSize={width * 0.05} fontWeight="bold">點擊抽蛋</text>
+                    </svg>
+                </div>
+            );
+        }
+
+        // ==========================================
+        // COMPONENT: LuckyWheel
+        // ==========================================
+        function LuckyWheel({ segments, onResult, onSpinStart, width, height, disabled }) {
+            const canvasRef = useRef(null);
+            const [spinning, setSpinning] = useState(false);
+            const currentRotation = useRef(0);
+            const spinVelocity = useRef(0);
+            const animationRef = useRef();
+            const { play: playSound } = useLotterySounds();
+            const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEEAD', '#D4A5A5', '#9B59B6', '#3498DB', '#E67E22', '#2ECC71', '#F1C40F', '#E74C3C'];
+            const lastTickRotation = useRef(0);
+
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const ctx = canvas.getContext('2d');
+
+                const draw = () => {
+                    const centerX = width / 2;
+                    // Shift center up to make room for stand
+                    const centerY = height * 0.42;
+                    // Radius constrained by width or available height (minus stand space)
+                    const radius = Math.min(width * 0.9, height * 0.75) / 2;
+
+                    ctx.clearRect(0, 0, width, height);
+
+                    // 1. Draw Stand (Behind)
+                    const baseTopWidth = width * 0.15;
+                    const baseBottomWidth = width * 0.3;
+                    const baseHeight = height * 0.1;
+                    const baseY = height - 10;
+
+                    // Pole
+                    const poleWidth = width * 0.04;
+                    const poleTop = centerY;
+                    ctx.fillStyle = '#2a2a2a';
+                    // Draw pole from center down to base top. Add overlap to avoid gaps.
+                    ctx.fillRect(centerX - poleWidth / 2, poleTop, poleWidth, (baseY - baseHeight) - poleTop + 5);
+
+                    // Base (Trapezoid)
+                    ctx.fillStyle = '#1a1a1a';
+                    ctx.beginPath();
+                    ctx.moveTo(centerX - baseTopWidth / 2, baseY - baseHeight);
+                    ctx.lineTo(centerX + baseTopWidth / 2, baseY - baseHeight);
+                    ctx.lineTo(centerX + baseBottomWidth / 2, baseY);
+                    ctx.lineTo(centerX - baseBottomWidth / 2, baseY);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Base highlight/detail
+                    ctx.fillStyle = '#333';
+                    ctx.fillRect(centerX - baseBottomWidth / 2 + 5, baseY - 4, baseBottomWidth - 10, 2);
+
+                    // 2. Draw Segments
+                    segments.forEach((seg, i) => {
+                        const sliceAngle = (2 * Math.PI) / segments.length;
+                        const startAngle = currentRotation.current + i * sliceAngle;
+
+                        ctx.beginPath();
+                        ctx.moveTo(centerX, centerY);
+                        ctx.arc(centerX, centerY, radius, startAngle, startAngle + sliceAngle);
+                        ctx.closePath();
+                        ctx.fillStyle = colors[i % colors.length];
+                        ctx.fill();
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+
+                        ctx.save();
+                        ctx.translate(centerX, centerY);
+                        ctx.rotate(startAngle + sliceAngle / 2);
+                        ctx.textAlign = 'right';
+                        ctx.fillStyle = '#fff';
+
+                        // Dynamic font size
+                        let fontSize = radius / 6;
+                        if (segments.length > 12) fontSize = radius / 10;
+                        if (segments.length > 20) fontSize = radius / 14;
+
+                        ctx.font = `bold ${fontSize}px Arial`;
+                        ctx.textBaseline = 'middle';
+                        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                        ctx.shadowBlur = 4;
+                        ctx.fillText(seg.label, radius - 20, 0);
+                        ctx.restore();
+                    });
+
+                    // 3. Draw Center Hub (Behind Arrow)
+                    ctx.beginPath();
+                    ctx.arc(centerX, centerY, radius * 0.2, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#1a1a1a';
+                    ctx.fill();
+
+                    ctx.beginPath();
+                    ctx.arc(centerX, centerY, radius * 0.15, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#333';
+                    ctx.fill();
+
+                    // 4. Draw Center Arrow (Pointing UP)
+                    ctx.save();
+                    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                    ctx.shadowBlur = 5;
+                    ctx.shadowOffsetY = 2;
+
+                    ctx.beginPath();
+                    // Arrow shape
+                    const arrowScale = radius / 170; // Reference scale
+
+                    // Tip (Top)
+                    ctx.moveTo(centerX, centerY - 50 * arrowScale);
+                    // Right Wing
+                    ctx.lineTo(centerX + 18 * arrowScale, centerY - 10 * arrowScale);
+                    // Right Base
+                    ctx.lineTo(centerX + 6 * arrowScale, centerY - 15 * arrowScale);
+                    // Right Stem
+                    ctx.lineTo(centerX + 6 * arrowScale, centerY + 10 * arrowScale);
+                    // Left Stem
+                    ctx.lineTo(centerX - 6 * arrowScale, centerY + 10 * arrowScale);
+                    // Left Base
+                    ctx.lineTo(centerX - 6 * arrowScale, centerY - 15 * arrowScale);
+                    // Left Wing
+                    ctx.lineTo(centerX - 18 * arrowScale, centerY - 10 * arrowScale);
+                    ctx.closePath();
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fill();
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = '#333';
+                    ctx.stroke();
+                    ctx.restore();
+                };
+                draw();
+
+                if (spinning) {
+                    const animate = () => {
+                        spinVelocity.current *= 0.99;
+                        currentRotation.current += spinVelocity.current;
+
+                        // Tick sound logic
+                        const tickInterval = (2 * Math.PI) / segments.length;
+                        const rotationDelta = currentRotation.current - lastTickRotation.current;
+                        if (rotationDelta >= tickInterval) {
+                            playSound('wheel-tick');
+                            lastTickRotation.current = currentRotation.current;
+                        }
+
+                        if (spinVelocity.current < 0.002) {
+                            setSpinning(false);
+                            // Determine result logic
+                            // Arrow is pointing UP (Angle = -PI/2 or 3PI/2)
+                            // Segment Angle starts at currentRotation
+                            const normalized = currentRotation.current % (2 * Math.PI);
+                            // Effective angle at pointer (UP) = (3PI/2 - normalized)
+                            let pointerAngle = (3 * Math.PI / 2 - normalized) % (2 * Math.PI);
+                            if (pointerAngle < 0) pointerAngle += 2 * Math.PI;
+
+                            const totalAngle = 2 * Math.PI;
+                            const segmentAngle = totalAngle / segments.length;
+                            const index = Math.floor(pointerAngle / segmentAngle);
+
+                            const winner = segments[index];
+
+                            playSound('wheel-result');
+                            onResult?.(winner);
+                        } else {
+                            draw();
+                            animationRef.current = requestAnimationFrame(animate);
+                        }
+                    };
+                    animationRef.current = requestAnimationFrame(animate);
+                } else {
+                    if (animationRef.current) cancelAnimationFrame(animationRef.current);
+                }
+
+                return () => cancelAnimationFrame(animationRef.current);
+
+            }, [segments, spinning, width, height]);
+
+            const spin = useCallback(() => {
+                if (spinning || disabled) return;
+                onSpinStart?.();
+                setSpinning(true);
+                spinVelocity.current = 0.4 + Math.random() * 0.4;
+            }, [spinning, disabled, onSpinStart]);
+
+            return <canvas ref={canvasRef} width={width} height={height} onClick={spin} className="cursor-pointer" />;
+        }
+
+
+        // ==========================================
+        // APP COMPONENT
+        // ==========================================
+        function App() {
+            const [mode, setMode] = useState('gacha');
+            const [result, setResult] = useState(null);
+
+            // Generate numbers 1-25
+            const items = useMemo(() => Array.from({ length: 25 }, (_, i) => ({
+                id: String(i + 1),
+                label: String(i + 1)
+            })), []);
+
+            const handleResult = (item) => {
+                setResult(item);
+            };
+
+            const reset = () => {
+                setResult(null);
+            };
+
+            // Fullscreen dimensions
+            const [dims, setDims] = useState({ w: 800, h: 800 });
+            useEffect(() => {
+                const updateDims = () => {
+                    const h = window.innerHeight * 0.7; // 70% height for machine
+                    setDims({ w: h * 0.8, h: h }); // maintain aspect
+                };
+                window.addEventListener('resize', updateDims);
+                updateDims();
+                return () => window.removeEventListener('resize', updateDims);
+            }, []);
+
+            return (
+                <div className="flex flex-col h-screen w-screen bg-slate-100 text-slate-900 overflow-hidden">
+                    {/* Header */}
+                    <div className="flex justify-between items-center p-6 bg-white/50 backdrop-blur border-b border-slate-300 z-10">
+                        <h1 className="text-3xl font-bold text-slate-800">
+                            賓果大挑戰
+                        </h1>
+                        <div className="flex gap-4">
+                            <button onClick={() => setMode('gacha')} className={`lottery-btn ${mode === 'gacha' ? 'lottery-btn-primary' : 'lottery-btn-secondary'}`}>🎰 扭蛋機</button>
+                            <button onClick={() => setMode('fortune')} className={`lottery-btn ${mode === 'fortune' ? 'lottery-btn-primary' : 'lottery-btn-secondary'}`}>🎋 籤筒</button>
+                            <button onClick={() => setMode('wheel')} className={`lottery-btn ${mode === 'wheel' ? 'lottery-btn-primary' : 'lottery-btn-secondary'}`}>🎡 轉盤</button>
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 flex items-center justify-center relative overlow-hidden">
+                        <div className="relative z-0 transition-all duration-500 transform hover:scale-105">
+                            {mode === 'gacha' && <GachaMachine items={items} width={dims.w} height={dims.h} onResult={handleResult} />}
+                            {mode === 'fortune' && <FortuneSticks items={items} width={dims.w} height={dims.h} onResult={handleResult} />}
+                            {mode === 'wheel' && <LuckyWheel segments={items} width={dims.h} height={dims.h} onResult={handleResult} />}
+                        </div>
+                    </div>
+
+                    {/* BIG RESULT OVERLAY */}
+                    {result && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
+                            <div className="flex flex-col items-center animate-in zoom-in-50 duration-300">
+                                <div className="text-[20rem] font-black text-transparent bg-clip-text bg-gradient-to-br from-amber-300 via-yellow-400 to-orange-500 drop-shadow-[0_10px_10px_rgba(0,0,0,0.5)] font-serif leading-none select-none">
+                                    {result.label}
+                                </div>
+                                <div className="mt-12 flex gap-8">
+                                    <button onClick={reset} className="px-12 py-6 text-4xl font-bold rounded-2xl bg-slate-700 hover:bg-slate-600 text-white shadow-2xl transition-transform hover:scale-105 active:scale-95">
+                                        重置
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+
+</html>
