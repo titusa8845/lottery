@@ -242,13 +242,13 @@
                         setShakeY(0);
                         setSticksY(Array(20).fill(0).map(() => Math.random() * 5));
 
-                        let floatY = height * 0.9 - 150;
+                        let floatY = height * 0.8 - 150;
                         const floatRotation = (Math.random() - 0.5) * 5;
                         setFloatingStick({ item: winner, y: floatY, rotation: floatRotation });
 
                         const floatAnim = () => {
                             floatY -= 5; // Faster rise
-                            if (floatY > height * 0.9 - 350) { // Rise higher due to big scale
+                            if (floatY > height * 0.9 - 400) { // Rise higher due to big scale
                                 setFloatingStick(prev => prev ? { ...prev, y: floatY } : null);
                                 animationRef.current = requestAnimationFrame(floatAnim);
                             } else {
@@ -514,9 +514,12 @@
                     ctx.fillRect(centerX - baseBottomWidth / 2 + 5, baseY - 4, baseBottomWidth - 10, 2);
 
                     // 2. Draw Segments
+                    // IMPORTANT: Start drawing from -PI/2 (12 o'clock) so segment 0 is centered at top
+                    const sliceAngle = (2 * Math.PI) / segments.length;
+                    const startOffset = -Math.PI / 2 - sliceAngle / 2; // Offset to center first segment at top
+
                     segments.forEach((seg, i) => {
-                        const sliceAngle = (2 * Math.PI) / segments.length;
-                        const startAngle = currentRotation.current + i * sliceAngle;
+                        const startAngle = currentRotation.current + startOffset + i * sliceAngle;
 
                         ctx.beginPath();
                         ctx.moveTo(centerX, centerY);
@@ -609,18 +612,24 @@
                         if (spinVelocity.current < 0.002) {
                             setSpinning(false);
                             // Determine result logic
-                            // Arrow is pointing UP (Angle = -PI/2 or 3PI/2)
-                            // Segment Angle starts at currentRotation
-                            const normalized = currentRotation.current % (2 * Math.PI);
-                            // Effective angle at pointer (UP) = (3PI/2 - normalized)
-                            let pointerAngle = (3 * Math.PI / 2 - normalized) % (2 * Math.PI);
-                            if (pointerAngle < 0) pointerAngle += 2 * Math.PI;
+                            // Arrow points UP (-PI/2). Segments are drawn with startOffset.
+                            // The segment at index i occupies from startOffset + i*sliceAngle to startOffset + (i+1)*sliceAngle
+                            // We need to find which segment is under the pointer at -PI/2
+                            const sliceAngle = (2 * Math.PI) / segments.length;
+                            const startOffset = -Math.PI / 2 - sliceAngle / 2;
 
-                            const totalAngle = 2 * Math.PI;
-                            const segmentAngle = totalAngle / segments.length;
-                            const index = Math.floor(pointerAngle / segmentAngle);
+                            // Normalize current rotation to [0, 2*PI)
+                            let normalizedRotation = currentRotation.current % (2 * Math.PI);
+                            if (normalizedRotation < 0) normalizedRotation += 2 * Math.PI;
 
-                            const winner = segments[index];
+                            // The segment at the top is determined by how much we've rotated
+                            // When rotation is 0, segment 0 is at top. As rotation increases, segments move clockwise.
+                            // So the segment at top is: floor((0 - rotation) / sliceAngle) mod n, but simpler:
+                            // index = floor(segments.length - (rotation / sliceAngle) % segments.length)
+                            const index = Math.floor(segments.length - (normalizedRotation / sliceAngle)) % segments.length;
+                            const positiveIndex = (index + segments.length) % segments.length;
+
+                            const winner = segments[positiveIndex];
 
                             playSound('wheel-result');
                             onResult?.(winner);
