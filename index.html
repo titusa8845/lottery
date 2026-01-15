@@ -37,6 +37,59 @@
         .lottery-btn-secondary {
             @apply bg-slate-700 hover:bg-slate-600 text-slate-200 shadow-slate-900/50 border border-slate-600;
         }
+        /* 
+           Playful Jelly Flip Animation (Total 8s):
+           0% - 10%: Static
+           10% - 15%: Anticipation (Squash)
+           15% - 40%: Flip 360 with Stretch
+           40% - 50%: Landing Wobble (Jelly)
+           50% - 100%: Static
+        */
+        @keyframes jelly-flip {
+            0%, 10% { transform: scale(1, 1) rotateY(0deg); }
+            12% { transform: scale(1.1, 0.9) rotateY(0deg); } /* Squash */
+            15% { transform: scale(0.9, 1.1) rotateY(0deg); } /* Stretch start */
+            28% { transform: scale(1.1, 0.9) rotateY(180deg); } /* Mid-flip stretch */
+            40% { transform: scale(1, 1) rotateY(360deg); } /* Land */
+            43% { transform: scale(1.15, 0.85) rotateY(360deg); } /* Wobble 1 */
+            45% { transform: scale(0.95, 1.05) rotateY(360deg); } /* Wobble 2 */
+            47% { transform: scale(1.05, 0.95) rotateY(360deg); } /* Wobble 3 */
+            50%, 100% { transform: scale(1, 1) rotateY(360deg); }
+        }
+        .animate-jelly-flip {
+            animation: jelly-flip 5s ease-in-out infinite;
+            transform-style: preserve-3d;
+            transform-origin: center center;
+        }
+        /* 
+           Gentle Sway Animation (Total 3s):
+           0%: Rotate -3deg
+           100%: Rotate 3deg
+        */
+        @keyframes sway {
+            0% { transform: rotate(-3deg); }
+            100% { transform: rotate(3deg); }
+        }
+        .animate-sway {
+            animation: sway 3s ease-in-out infinite alternate;
+            transform-origin: center bottom; /* Anchor sway to the bottom */
+        }
+        /* 
+           Text Shine/Progress Animation:
+           Simulates a light passing through the text 
+        */
+        @keyframes shine {
+            0% { background-position: 200% center; }
+            100% { background-position: -200% center; }
+        }
+        .animate-text-shine {
+            background: linear-gradient(to right, #1e293b 20%, #fbbf24 50%, #1e293b 80%);
+            background-size: 200% auto;
+            color: transparent;
+            -webkit-background-clip: text;
+            background-clip: text;
+            animation: shine 4s linear infinite;
+        }
         /* Custom scrollbar for webkit */
         ::-webkit-scrollbar {
             width: 8px;
@@ -667,6 +720,27 @@
             const [history, setHistory] = useState([]);
             const [showHistory, setShowHistory] = useState(false);
 
+            const [musicPlaying, setMusicPlaying] = useState(false);
+            const [volume, setVolume] = useState(0.3);
+            const audioRef = useRef(null);
+
+            useEffect(() => {
+                if (audioRef.current) {
+                    audioRef.current.volume = volume;
+                    if (musicPlaying) {
+                        const playPromise = audioRef.current.play();
+                        if (playPromise !== undefined) {
+                            playPromise.catch(error => {
+                                console.log("Auto-play prevented:", error);
+                                setMusicPlaying(false);
+                            });
+                        }
+                    } else {
+                        audioRef.current.pause();
+                    }
+                }
+            }, [musicPlaying, volume]);
+
             // Load history from localStorage on mount
             useEffect(() => {
                 const saved = localStorage.getItem('bingo_history');
@@ -727,15 +801,44 @@
 
             return (
                 <div className="flex flex-col h-screen w-screen text-slate-900 overflow-hidden relative">
+                    <audio ref={audioRef} loop>
+                        <source src="https://s17.aconvert.com/convert/p3r68-cdx67/wno11-t9on5.opus" type="audio/ogg; codecs=opus" />
+                        <source src="./music.opus" type="audio/ogg; codecs=opus" />
+                    </audio>
+
                     {/* Header */}
                     <div className="relative flex justify-between items-center p-6 bg-white/50 backdrop-blur border-b border-slate-300 z-20 transition-all duration-500 shadow-sm">
-                        <h1 className="text-3xl font-bold text-slate-800 drop-shadow-sm flex items-center gap-4">
-                            義方玩很大-賓果大挑戰
-                            <span className="text-sm font-normal px-3 py-1 bg-slate-200/50 rounded-full text-slate-600">
-                                剩餘: {availableItems.length}
+                        <h1 className="flex items-center gap-4">
+                            <img src="./yefs.webp" alt="義方玩很大" className="h-24 object-contain drop-shadow-md animate-jelly-flip" />
+                            <span className="text-5xl font-black tracking-wider animate-text-shine drop-shadow-lg" style={{ fontFamily: '"Microsoft JhengHei", sans-serif' }}>
+                                賓果大挑戰
+                            </span>
+                            <span className="text-xl font-bold px-4 py-2 bg-slate-200/80 rounded-full text-slate-700 shadow-inner ml-2">
+                                剩餘：{availableItems.length}
                             </span>
                         </h1>
-                        <div className="flex gap-4">
+                        <div className="flex gap-4 items-center">
+                            {/* Music Controls */}
+                            <div className="flex items-center gap-2 mr-2 bg-slate-200/50 p-2 rounded-xl">
+                                <button
+                                    onClick={() => setMusicPlaying(!musicPlaying)}
+                                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${musicPlaying ? 'bg-amber-500 text-white shadow-amber-500/30' : 'bg-slate-300 text-slate-500'}`}
+                                    title={musicPlaying ? "暫停音樂" : "播放音樂"}
+                                >
+                                    {musicPlaying ? '⏸' : '▶'}
+                                </button>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="1"
+                                    step="0.05"
+                                    value={volume}
+                                    onChange={(e) => setVolume(parseFloat(e.target.value))}
+                                    className="w-20"
+                                    title={`音量: ${Math.round(volume * 100)}%`}
+                                />
+                            </div>
+
                             <button onClick={reset} className="lottery-btn bg-red-500 hover:bg-red-400 text-white shadow-red-500/30">
                                 🔄 重置
                             </button>
@@ -750,7 +853,7 @@
                     </div>
 
                     {/* Left Sidebar - Bingo Grid */}
-                    <div className={`fixed left-0 top-[88px] bottom-0 w-80 bg-white/90 backdrop-blur-xl border-r border-slate-200 shadow-2xl z-30 transition-transform duration-300 transform ${showHistory ? 'translate-x-0' : '-translate-x-full'} overflow-y-auto`}>
+                    <div className={`fixed left-0 top-[150px] bottom-0 w-80 bg-white/90 backdrop-blur-xl border-r border-slate-200 shadow-2xl z-30 transition-transform duration-300 transform ${showHistory ? 'translate-x-0' : '-translate-x-full'} overflow-y-auto`}>
                         <div className="p-6 flex flex-col items-center">
                             <h2 className="text-2xl font-bold text-slate-800 mb-6 border-b border-slate-300 w-full text-center pb-2">
                                 賓果總覽
@@ -775,7 +878,25 @@
                             marginLeft: showHistory ? '320px' : '0'
                         }}>
                         {/* Background Image Container */}
-                        <div className="absolute inset-0 z-0 bg-contain bg-center bg-no-repeat" style={{ backgroundImage: "url('./2.png')" }}></div>
+                        <div className="absolute inset-0 z-0 bg-contain bg-center bg-no-repeat" style={{ backgroundImage: "url('./2.webp')" }}></div>
+
+                        {/* Floating Logo Layer (Wrapper for Positioning) */}
+                        <div
+                            className="absolute z-0 select-none pointer-events-none"
+                            style={{
+                                top: '5%',
+                                left: '50%',          // Anchor to center of screen
+                                marginLeft: '-600px', // Offset from center (Adjust this value to move left/right)
+                                width: '550px',
+                                height: 'auto'
+                            }}
+                        >
+                            <img
+                                src="./yefs.webp"
+                                alt="Logo"
+                                className="w-full object-contain opacity-90 animate-sway"
+                            />
+                        </div>
 
                         {/* Background Overlay for Focus Mode (Blurs the image below) */}
                         <div className={`absolute inset-0 transition-all duration-700 pointer-events-none z-10 ${mode === 'home' ? 'backdrop-blur-none bg-black/0' : 'backdrop-blur-md bg-black/30'}`}></div>
@@ -796,7 +917,7 @@
                     </div>
 
                     {/* Right Sidebar - History Panel */}
-                    <div className={`fixed right-0 top-[88px] bottom-0 w-80 bg-white/90 backdrop-blur-xl border-l border-slate-200 shadow-2xl z-30 transition-transform duration-300 transform ${showHistory ? 'translate-x-0' : 'translate-x-full'} overflow-y-auto`}>
+                    <div className={`fixed right-0 top-[150px] bottom-0 w-80 bg-white/90 backdrop-blur-xl border-l border-slate-200 shadow-2xl z-30 transition-transform duration-300 transform ${showHistory ? 'translate-x-0' : 'translate-x-full'} overflow-y-auto`}>
                         <div className="p-6 flex flex-col items-center gap-4">
                             <h2 className="text-2xl font-bold text-slate-800 mb-4 border-b border-slate-300 w-full text-center pb-2">
                                 歷史紀錄 ({history.length})
